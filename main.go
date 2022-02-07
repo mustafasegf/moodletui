@@ -47,6 +47,81 @@ type LoginModel struct {
 	spinner       spinner.Model
 	sub           chan loginMsg
 	msg           string
+	cursorMode    textinput.CursorMode
+}
+
+func MakeLoginModel() LoginModel {
+	m := LoginModel{
+		focusIndex:    int(usernameLoginState),
+		usernameInput: textinput.New(),
+		passwordInput: textinput.New(),
+		submitButton:  blurredButton,
+		isLoading:     false,
+		spinner:       spinner.New(),
+		sub:           make(chan loginMsg),
+	}
+
+	m.usernameInput.Placeholder = "username"
+	m.usernameInput.Focus()
+	m.usernameInput.PromptStyle = focusedStyle
+	m.usernameInput.TextStyle = focusedStyle
+	m.usernameInput.CursorStyle = cursorStyle
+
+	m.passwordInput.Placeholder = "password"
+	m.passwordInput.EchoMode = textinput.EchoPassword
+	m.passwordInput.EchoCharacter = '*'
+	m.passwordInput.CursorStyle = cursorStyle
+
+	m.spinner.Spinner = spinner.MiniDot
+	return m
+}
+
+func (m LoginModel) Init() tea.Cmd {
+	return textinput.Blink
+}
+
+func (m LoginModel) View() string {
+	var b strings.Builder
+	b.WriteString(m.usernameInput.View())
+	b.WriteRune('\n')
+	b.WriteString(m.passwordInput.View())
+	b.WriteRune('\n')
+
+	button := &blurredButton
+	if m.focusIndex == 2 {
+		button = &focusedButton
+	}
+
+	fmt.Fprintf(&b, "\n%s\n", *button)
+
+	if m.isLoading {
+		b.WriteString(fmt.Sprintf("%s Loading...\n", m.spinner.View()))
+	} else {
+		b.WriteRune('\n')
+	}
+
+	b.WriteString(fmt.Sprintf("%s", m.msg))
+	return b.String()
+}
+
+func (m *LoginModel) login() tea.Cmd {
+	return func() tea.Msg {
+		username := m.usernameInput.Value()
+		password := m.passwordInput.Value()
+		token, err := httpreq.LoginScele(username, password)
+
+		if err != nil {
+			return loginMsg{
+				err: err,
+			}
+		}
+
+		return loginMsg{
+			msg: token,
+			err: nil,
+		}
+
+	}
 }
 
 type ForumModel struct {
@@ -77,55 +152,19 @@ type loginMsg struct {
 	err error
 }
 
-func login(m model) tea.Cmd {
-	return func() tea.Msg {
-		username := m.loginModel.usernameInput.Value()
-		password := m.loginModel.passwordInput.Value()
-		token, err := httpreq.LoginScele(username, password)
-
-		if err != nil {
-			return loginMsg{
-				err: err,
-			}
-		}
-
-		return loginMsg{
-			msg: token,
-			err: nil,
-		}
-
-	}
-}
-
 func initialModel() model {
 	m := model{
-		state: loginState,
-		loginModel: LoginModel{
-			focusIndex:    int(usernameLoginState),
-			usernameInput: textinput.New(),
-			passwordInput: textinput.New(),
-			submitButton:  blurredButton,
-			isLoading:     false,
-			spinner:       spinner.New(),
-			sub:           make(chan loginMsg),
-		},
+		state:      loginState,
+		loginModel: MakeLoginModel(),
 	}
 
-	m.loginModel.usernameInput.Placeholder = "username"
-	m.loginModel.usernameInput.Focus()
-	m.loginModel.usernameInput.PromptStyle = focusedStyle
-	m.loginModel.usernameInput.TextStyle = focusedStyle
-
-	m.loginModel.passwordInput.Placeholder = "password"
-	m.loginModel.passwordInput.EchoMode = textinput.EchoPassword
-	m.loginModel.passwordInput.EchoCharacter = '*'
-
-	m.loginModel.spinner.Spinner = spinner.MiniDot
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	cmds := make([]tea.Cmd, 0)
+	cmds = append(cmds, m.loginModel.Init())
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -157,7 +196,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loginModel.isLoading = true
 				m.loginModel.msg = ""
 				cmds = make([]tea.Cmd, 0, 2)
-				cmds = append(cmds, login(m))
+				cmds = append(cmds, m.loginModel.login())
 				cmds = append(cmds, m.loginModel.spinner.Tick)
 				return m, tea.Batch(cmds...)
 			}
@@ -187,20 +226,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loginModel.usernameInput.PromptStyle = focusedStyle
 				m.loginModel.usernameInput.TextStyle = focusedStyle
 
+				m.loginModel.passwordInput.Blur()
 				cmds = append(cmds, m.loginModel.usernameInput.Focus())
-			} else if m.loginModel.focusIndex == int(passwordLoginState) {
 
+			} else if m.loginModel.focusIndex == int(passwordLoginState) {
 				m.loginModel.passwordInput.PromptStyle = focusedStyle
 				m.loginModel.passwordInput.TextStyle = focusedStyle
 
+				m.loginModel.usernameInput.Blur()
 				cmds = append(cmds, m.loginModel.passwordInput.Focus())
 			}
-		default:
-
-			cmds = make([]tea.Cmd, 2)
-
-			m.loginModel.usernameInput, cmds[0] = m.loginModel.usernameInput.Update(msg)
-			m.loginModel.passwordInput, cmds[1] = m.loginModel.passwordInput.Update(msg)
+			return m, tea.Batch(cmds...)
 		}
 
 	case spinner.TickMsg:
@@ -209,35 +245,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	}
+
+	cmds = make([]tea.Cmd, 2)
+
+	m.loginModel.usernameInput, cmds[0] = m.loginModel.usernameInput.Update(msg)
+	m.loginModel.passwordInput, cmds[1] = m.loginModel.passwordInput.Update(msg)
+
 	return m, tea.Batch(cmds...)
 }
 
 func (m model) View() string {
-	var b strings.Builder
-
 	switch m.state {
 	case loginState:
-		b.WriteString(m.loginModel.usernameInput.View())
-		b.WriteRune('\n')
-		b.WriteString(m.loginModel.passwordInput.View())
-		b.WriteRune('\n')
-
-		button := &blurredButton
-		if m.loginModel.focusIndex == 2 {
-			button = &focusedButton
-		}
-		fmt.Fprintf(&b, "\n%s\n", *button)
+		return m.loginModel.View()
 	}
-
-	if m.loginModel.isLoading {
-
-		b.WriteString(fmt.Sprintf("%s Loading...\n", m.loginModel.spinner.View()))
-	} else {
-		b.WriteRune('\n')
-	}
-
-	b.WriteString(fmt.Sprintf("%s", m.loginModel.msg))
-	return b.String()
+	return ""
 }
 
 func main() {
