@@ -25,6 +25,7 @@ var (
 
 var (
 	httpreq *HttpRequest
+	token   string
 )
 
 func init() {
@@ -78,6 +79,93 @@ func MakeLoginModel() LoginModel {
 
 func (m LoginModel) Init() tea.Cmd {
 	return textinput.Blink
+}
+
+func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case loginMsg:
+		m.isLoading = false
+		m.spinner.Finish()
+		if msg.err != nil {
+			m.msg = msg.err.Error()
+		} else {
+			m.msg = "logged in"
+			httpreq.token = msg.msg
+		}
+
+		cmds = make([]tea.Cmd, 0, 1)
+		cmds = append(cmds, m.spinner.Tick)
+
+		return m, tea.Batch(cmds...)
+
+	case tea.KeyMsg:
+		s := msg.String()
+		switch s {
+		case "ctrl+c", "esc", "q":
+			return m, tea.Quit
+
+		case "up", "down", "enter", "tab", "shift+tab":
+			if s == "enter" && m.focusIndex == int(submitLoginState) {
+				m.isLoading = true
+				m.msg = ""
+				cmds = make([]tea.Cmd, 0, 2)
+				cmds = append(cmds, m.login())
+				cmds = append(cmds, m.spinner.Tick)
+				return m, tea.Batch(cmds...)
+			}
+
+			if s == "up" || s == "shift+tab" {
+				m.focusIndex--
+			} else {
+				m.focusIndex++
+			}
+
+			if m.focusIndex > 2 {
+				m.focusIndex = 0
+			} else if m.focusIndex < 0 {
+				m.focusIndex = 2
+			}
+
+			m.passwordInput.PromptStyle = noStyle
+			m.passwordInput.TextStyle = noStyle
+
+			m.usernameInput.PromptStyle = noStyle
+			m.usernameInput.TextStyle = noStyle
+			m.passwordInput.Blur()
+			m.usernameInput.Blur()
+
+			cmds = make([]tea.Cmd, 0, 2)
+			if m.focusIndex == int(usernameLoginState) {
+				m.usernameInput.PromptStyle = focusedStyle
+				m.usernameInput.TextStyle = focusedStyle
+
+				m.passwordInput.Blur()
+				cmds = append(cmds, m.usernameInput.Focus())
+
+			} else if m.focusIndex == int(passwordLoginState) {
+				m.passwordInput.PromptStyle = focusedStyle
+				m.passwordInput.TextStyle = focusedStyle
+
+				m.usernameInput.Blur()
+				cmds = append(cmds, m.passwordInput.Focus())
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	}
+
+	cmds = make([]tea.Cmd, 2)
+
+	m.usernameInput, cmds[0] = m.usernameInput.Update(msg)
+	m.passwordInput, cmds[1] = m.passwordInput.Update(msg)
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m LoginModel) View() string {
@@ -168,90 +256,11 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	switch msg := msg.(type) {
-	case loginMsg:
-		m.loginModel.isLoading = false
-		m.loginModel.spinner.Finish()
-		if msg.err != nil {
-			m.loginModel.msg = msg.err.Error()
-		} else {
-			m.loginModel.msg = "logged in"
-			m.token = msg.msg
-		}
-
-		cmds = make([]tea.Cmd, 0, 1)
-		cmds = append(cmds, m.loginModel.spinner.Tick)
-
-		return m, tea.Batch(cmds...)
-
-	case tea.KeyMsg:
-		s := msg.String()
-		switch s {
-		case "ctrl+c", "esc", "q":
-			return m, tea.Quit
-
-		case "up", "down", "enter", "tab", "shift+tab":
-			if s == "enter" && m.loginModel.focusIndex == int(submitLoginState) {
-				m.loginModel.isLoading = true
-				m.loginModel.msg = ""
-				cmds = make([]tea.Cmd, 0, 2)
-				cmds = append(cmds, m.loginModel.login())
-				cmds = append(cmds, m.loginModel.spinner.Tick)
-				return m, tea.Batch(cmds...)
-			}
-
-			if s == "up" || s == "shift+tab" {
-				m.loginModel.focusIndex--
-			} else {
-				m.loginModel.focusIndex++
-			}
-
-			if m.loginModel.focusIndex > 2 {
-				m.loginModel.focusIndex = 0
-			} else if m.loginModel.focusIndex < 0 {
-				m.loginModel.focusIndex = 2
-			}
-
-			m.loginModel.passwordInput.PromptStyle = noStyle
-			m.loginModel.passwordInput.TextStyle = noStyle
-
-			m.loginModel.usernameInput.PromptStyle = noStyle
-			m.loginModel.usernameInput.TextStyle = noStyle
-			m.loginModel.passwordInput.Blur()
-			m.loginModel.usernameInput.Blur()
-
-			cmds = make([]tea.Cmd, 0, 2)
-			if m.loginModel.focusIndex == int(usernameLoginState) {
-				m.loginModel.usernameInput.PromptStyle = focusedStyle
-				m.loginModel.usernameInput.TextStyle = focusedStyle
-
-				m.loginModel.passwordInput.Blur()
-				cmds = append(cmds, m.loginModel.usernameInput.Focus())
-
-			} else if m.loginModel.focusIndex == int(passwordLoginState) {
-				m.loginModel.passwordInput.PromptStyle = focusedStyle
-				m.loginModel.passwordInput.TextStyle = focusedStyle
-
-				m.loginModel.usernameInput.Blur()
-				cmds = append(cmds, m.loginModel.passwordInput.Focus())
-			}
-			return m, tea.Batch(cmds...)
-		}
-
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.loginModel.spinner, cmd = m.loginModel.spinner.Update(msg)
-		return m, cmd
-
+	switch m.state {
+	case loginState:
+		return m.loginModel.Update(msg)
 	}
-
-	cmds = make([]tea.Cmd, 2)
-
-	m.loginModel.usernameInput, cmds[0] = m.loginModel.usernameInput.Update(msg)
-	m.loginModel.passwordInput, cmds[1] = m.loginModel.passwordInput.Update(msg)
-
-	return m, tea.Batch(cmds...)
+	return nil, nil
 }
 
 func (m model) View() string {
