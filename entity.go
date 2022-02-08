@@ -8,12 +8,12 @@ import (
 )
 
 type Forum struct {
-	Discussion Discussion `json:"discussion"`
+	Discussions []Discussion `json:"discussions"`
 }
 
 type Discussion struct {
 	ID                    int        `json:"id"`
-	name                  string     `json:"name"`
+	Name                  string     `json:"name"`
 	GroupID               int        `json:"groupid"`
 	TimeModified          int        `json:"timemodified"`
 	UserModified          int        `json:"usermodified"`
@@ -26,7 +26,7 @@ type Discussion struct {
 	Modified              int        `json:"modified"`
 	Mailed                int        `json:"mailed"`
 	Subject               string     `json:"subject"`
-	Messge                string     `json:"messge"`
+	Message               string     `json:"message"`
 	MessgeFormat          int        `json:"messgeformat"`
 	MessgeTrust           int        `json:"messgetrust"`
 	Attachment            int        `json:"attachment"`

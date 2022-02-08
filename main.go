@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/k3a/html2text"
 )
 
 var (
@@ -33,11 +36,6 @@ func init() {
 }
 
 type state int
-
-type user struct {
-	ID    int
-	token string
-}
 
 type LoginModel struct {
 	focusIndex    int
@@ -90,8 +88,7 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.msg = msg.err.Error()
 		} else {
-			m.msg = "logged in"
-			httpreq.token = msg.msg
+			m.msg = msg.msg
 		}
 
 		cmds = make([]tea.Cmd, 0, 1)
@@ -203,9 +200,17 @@ func (m *LoginModel) login() tea.Cmd {
 				err: err,
 			}
 		}
+		httpreq.token = token
+		userID, err := httpreq.GetSceleId()
+		if err != nil {
+			return loginMsg{
+				err: err,
+			}
+		}
 
+		httpreq.userID = userID
 		return loginMsg{
-			msg: token,
+			msg: "login success",
 			err: nil,
 		}
 
@@ -213,15 +218,65 @@ func (m *LoginModel) login() tea.Cmd {
 }
 
 type ForumModel struct {
+	title string
+	data  []Discussion
+	page  int
+}
+
+func (m ForumModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m ForumModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		s := msg.String()
+		switch s {
+		case "ctrl+c", "esc", "q":
+			return m, tea.Quit
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m ForumModel) View() string {
+	var b strings.Builder
+	b.WriteString(m.title)
+	b.WriteRune('\n')
+
+	for _, d := range m.data[:2] {
+		b.WriteString(d.Name)
+		b.WriteRune('\n')
+
+		b.WriteString(html2text.HTML2Text(d.Message))
+		b.WriteRune('\n')
+		b.WriteRune('\n')
+		b.WriteString("------------------------------\n")
+	}
+
+	return b.String()
+}
+
+func MakeForumModel(title string, forumid int) ForumModel {
+	forum, _ := httpreq.GetForumDiscusstion(forumid, 0)
+	m := ForumModel{
+		title: title,
+		data:  forum.Discussions,
+		page:  0,
+	}
+
+	return m
 }
 
 //TODO: bikin submodel buat login, forum dll
 type model struct {
-	state      state
-	user       user
-	forumModel ForumModel
-	loginModel LoginModel
-	token      string
+	page    int
+	history []tea.Model
+}
+
+func (m model) Active() tea.Model {
+	return m.history[int(m.page)]
 }
 
 const (
@@ -242,36 +297,73 @@ type loginMsg struct {
 
 func initialModel() model {
 	m := model{
-		state:      loginState,
-		loginModel: MakeLoginModel(),
+		page:    0,
+		history: make([]tea.Model, 0, 1),
 	}
 
+	if httpreq.token == "" || httpreq.userID == 0 {
+		m.history = append(m.history, MakeLoginModel())
+	}
+
+	m.history = append(m.history, MakeForumModel("homepage", 1))
 	return m
 }
 
 func (m model) Init() tea.Cmd {
 	cmds := make([]tea.Cmd, 0)
-	cmds = append(cmds, m.loginModel.Init())
+	cmds = append(cmds, m.Active().Init())
 	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch m.state {
+	/* switch m.state {
 	case loginState:
 		return m.loginModel.Update(msg)
 	}
-	return nil, nil
+	return nil, nil */
+	return m.Active().Update(msg)
 }
 
 func (m model) View() string {
-	switch m.state {
+	/* switch m.state {
 	case loginState:
 		return m.loginModel.View()
 	}
-	return ""
+	return "" */
+	return m.Active().View()
+}
+
+type Config struct {
+	Token  string `toml:"token"`
+	UserID int    `toml:"userid"`
+}
+
+func LoadConfig() {
+	_, err := os.OpenFile("config.toml", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+	if err != nil {
+		fmt.Println("can't open config")
+		os.Exit(1)
+	}
+
+	var conf Config
+	raw, err := ioutil.ReadFile("config.toml")
+	if err != nil {
+		fmt.Println("can't read config")
+		os.Exit(1)
+	}
+
+	_, err = toml.Decode(string(raw), &conf)
+
+	if err != nil {
+		fmt.Println("config.toml corrupted")
+		os.Exit(1)
+	}
+	httpreq.token = conf.Token
+	httpreq.userID = conf.UserID
 }
 
 func main() {
+	LoadConfig()
 	if err := tea.NewProgram(initialModel()).Start(); err != nil {
 		fmt.Printf("could not start program: %s\n", err)
 		os.Exit(1)

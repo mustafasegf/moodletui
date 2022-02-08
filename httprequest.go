@@ -7,7 +7,8 @@ import (
 )
 
 type HttpRequest struct {
-	token string
+	token  string
+	userID int
 }
 
 func NewHttpRequest() *HttpRequest {
@@ -44,23 +45,24 @@ func (r *HttpRequest) RequestScele(wsfunction string, args map[string]interface{
 	return
 }
 
-func (r *HttpRequest) GetSceleId(token string) (sceleUser SceleUser, err error) {
-	sceleUser = SceleUser{}
+func (r *HttpRequest) GetSceleId() (userID int, err error) {
+	sceleUser := SceleUser{}
 	err = r.RequestScele("core_webservice_get_site_info", nil, &sceleUser)
+	userID = sceleUser.SceleID
 	return
 }
 
-func (r *HttpRequest) GetCourses(token string, userid int) (courses []Course, err error) {
+func (r *HttpRequest) GetCourses() (courses []Course, err error) {
 	courses = make([]Course, 0)
-	err = r.RequestScele("core_enrol_get_users_courses", map[string]interface{}{"userid": userid}, &courses)
+	err = r.RequestScele("core_enrol_get_users_courses", map[string]interface{}{"userid": r.userID}, &courses)
 	return
 }
 
-func (r *HttpRequest) GetCourseDetail(token string, courseID int) (sanitizedResources []CourseResource, err error) {
-	resource := make([]CourseResource, 0)
+func (r *HttpRequest) GetCourseDetail(courseID int) (resource []CourseResource, err error) {
+	resource = make([]CourseResource, 0)
 	err = r.RequestScele("core_course_get_contents", map[string]interface{}{"courseid": courseID}, &resource)
 
-	sanitizedResources = make([]CourseResource, 0, len(resource))
+	/* sanitizedResources = make([]CourseResource, 0, len(resource))
 	for _, r := range resource {
 		if r.Uservisible && r.Visible == 1 {
 			sanitizedModulesResource := make([]ModulesResource, 0, len(r.Modules))
@@ -73,6 +75,12 @@ func (r *HttpRequest) GetCourseDetail(token string, courseID int) (sanitizedReso
 			r.Modules = sanitizedModulesResource
 			sanitizedResources = append(sanitizedResources, r)
 		}
-	}
+	} */
+	return
+}
+
+func (r *HttpRequest) GetForumDiscusstion(forumID, page int) (forum Forum, err error) {
+	forum = Forum{}
+	err = r.RequestScele("mod_forum_get_forum_discussions_paginated", map[string]interface{}{"forumid": forumID, "page": page, "perpage": 10}, &forum)
 	return
 }
