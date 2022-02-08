@@ -9,9 +9,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/k3a/html2text"
+	"jaytaylor.com/html2text"
 )
 
 var (
@@ -24,6 +25,8 @@ var (
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
+
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 )
 
 var (
@@ -219,9 +222,10 @@ func (m *LoginModel) login() tea.Cmd {
 }
 
 type ForumModel struct {
-	title string
-	data  []Discussion
-	page  int
+	title    string
+	data     []Discussion
+	page     int
+	viewport viewport.Model
 }
 
 func (m ForumModel) Init() tea.Cmd {
@@ -236,28 +240,49 @@ func (m ForumModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch s {
 		case "ctrl+c", "esc", "q":
 			return m, tea.Quit
+		default:
+			cmds = make([]tea.Cmd, 1)
+			m.viewport, cmds[0] = m.viewport.Update(msg)
+			return m, tea.Batch(cmds...)
 		}
+	case tea.WindowSizeMsg:
+		// if !m.ready {
+		m.viewport = viewport.New(msg.Width, msg.Height)
+		m.viewport.YPosition = msg.Height
+		m.viewport.SetContent(m.Content())
+
+		/* } else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height
+		} */
+
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
-func (m ForumModel) View() string {
+func (m ForumModel) Content() string {
 	var b strings.Builder
 	b.WriteString(m.title)
 	b.WriteRune('\n')
 
-	for _, d := range m.data[:2] {
-		b.WriteString(d.Name)
+	border := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
+	for _, d := range m.data {
+		var temp strings.Builder
+		temp.WriteString(titleStyle.Render(d.Name))
+		temp.WriteRune('\n')
+		text, _ := html2text.FromString(d.Message)
+		temp.WriteString(text)
+		b.WriteString(border.Render(temp.String()))
 		b.WriteRune('\n')
-
-		b.WriteString(html2text.HTML2Text(d.Message))
-		b.WriteRune('\n')
-		b.WriteRune('\n')
-		b.WriteString("------------------------------\n")
+		// temp.WriteString("------------------------------\n")
 	}
 
 	return b.String()
+}
+
+func (m ForumModel) View() string {
+	return fmt.Sprintf(m.viewport.View())
 }
 
 func MakeForumModel(title string, forumid int) ForumModel {
@@ -319,7 +344,7 @@ func initialModel() model {
 		return m
 	}
 
-	m.history = append(m.history, MakeForumModel("homepage", 1))
+	m.history = append(m.history, MakeForumModel("HOME PAGE", 1))
 	m.state = forumState
 
 	m.active = &m.history[0]
@@ -363,8 +388,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				*m.active, cmds[0] = mdl.Move(s, msg)
 
 				return m, tea.Batch(cmds...)
+			case forumState:
+				cmds = make([]tea.Cmd, 1)
+				*m.active, cmds[0] = m.Active().Update(msg)
+				return m, tea.Batch(cmds...)
 			}
+
 		}
+	case tea.WindowSizeMsg:
+		cmds = make([]tea.Cmd, 1)
+		*m.active, cmds[0] = m.Active().Update(msg)
+		return m, tea.Batch(cmds...)
 
 	}
 
@@ -420,7 +454,7 @@ func LoadConfig() {
 
 func main() {
 	LoadConfig()
-	if err := tea.NewProgram(initialModel()).Start(); err != nil {
+	if err := tea.NewProgram(initialModel(), tea.WithAltScreen()).Start(); err != nil {
 		fmt.Printf("could not start program: %s\n", err)
 		os.Exit(1)
 	}
