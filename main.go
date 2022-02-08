@@ -79,6 +79,53 @@ func (m LoginModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+func (m LoginModel) Move(s string, msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	if s == "enter" && m.focusIndex == int(submitLoginState) {
+		m.isLoading = true
+		m.msg = ""
+		cmds = make([]tea.Cmd, 0, 2)
+		cmds = append(cmds, m.login())
+		cmds = append(cmds, m.spinner.Tick)
+
+		return m, tea.Batch(cmds...)
+	}
+
+	if s == "up" || s == "shift+tab" {
+		m.focusIndex--
+	} else {
+		m.focusIndex++
+	}
+
+	if m.focusIndex > 2 {
+		m.focusIndex = 0
+	} else if m.focusIndex < 0 {
+		m.focusIndex = 2
+	}
+
+	m.passwordInput.PromptStyle = noStyle
+	m.passwordInput.TextStyle = noStyle
+
+	m.usernameInput.PromptStyle = noStyle
+	m.usernameInput.TextStyle = noStyle
+
+	m.passwordInput.Blur()
+	m.usernameInput.Blur()
+
+	cmds = make([]tea.Cmd, 0, 2)
+	if m.focusIndex == int(usernameLoginState) {
+		m.usernameInput.PromptStyle = focusedStyle
+		m.usernameInput.TextStyle = focusedStyle
+		cmds = append(cmds, m.usernameInput.Focus())
+	} else if m.focusIndex == int(passwordLoginState) {
+		m.passwordInput.PromptStyle = focusedStyle
+		m.passwordInput.TextStyle = focusedStyle
+		cmds = append(cmds, m.passwordInput.Focus())
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
 func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
@@ -88,7 +135,6 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.msg = msg.err.Error()
 		} else {
-			m.msg = msg.msg
 		}
 
 		cmds = make([]tea.Cmd, 0, 1)
@@ -103,62 +149,16 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "up", "down", "enter", "tab", "shift+tab":
-			if s == "enter" && m.focusIndex == int(submitLoginState) {
-				m.isLoading = true
-				m.msg = ""
-				cmds = make([]tea.Cmd, 0, 2)
-				cmds = append(cmds, m.login())
-				cmds = append(cmds, m.spinner.Tick)
-				return m, tea.Batch(cmds...)
-			}
-
-			if s == "up" || s == "shift+tab" {
-				m.focusIndex--
-			} else {
-				m.focusIndex++
-			}
-
-			if m.focusIndex > 2 {
-				m.focusIndex = 0
-			} else if m.focusIndex < 0 {
-				m.focusIndex = 2
-			}
-
-			m.passwordInput.PromptStyle = noStyle
-			m.passwordInput.TextStyle = noStyle
-
-			m.usernameInput.PromptStyle = noStyle
-			m.usernameInput.TextStyle = noStyle
-			m.passwordInput.Blur()
-			m.usernameInput.Blur()
-
-			cmds = make([]tea.Cmd, 0, 2)
-			if m.focusIndex == int(usernameLoginState) {
-				m.usernameInput.PromptStyle = focusedStyle
-				m.usernameInput.TextStyle = focusedStyle
-
-				m.passwordInput.Blur()
-				cmds = append(cmds, m.usernameInput.Focus())
-
-			} else if m.focusIndex == int(passwordLoginState) {
-				m.passwordInput.PromptStyle = focusedStyle
-				m.passwordInput.TextStyle = focusedStyle
-
-				m.usernameInput.Blur()
-				cmds = append(cmds, m.passwordInput.Focus())
-			}
-			return m, tea.Batch(cmds...)
+			return m.Move(s, msg)
 		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-
 	}
 
 	cmds = make([]tea.Cmd, 2)
-
 	m.usernameInput, cmds[0] = m.usernameInput.Update(msg)
 	m.passwordInput, cmds[1] = m.passwordInput.Update(msg)
 
@@ -202,18 +202,19 @@ func (m *LoginModel) login() tea.Cmd {
 		}
 		httpreq.token = token
 		userID, err := httpreq.GetSceleId()
+
 		if err != nil {
+			m.msg = err.Error()
 			return loginMsg{
 				err: err,
 			}
 		}
 
 		httpreq.userID = userID
+
 		return loginMsg{
-			msg: "login success",
 			err: nil,
 		}
-
 	}
 }
 
@@ -237,6 +238,7 @@ func (m ForumModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -272,11 +274,21 @@ func MakeForumModel(title string, forumid int) ForumModel {
 //TODO: bikin submodel buat login, forum dll
 type model struct {
 	page    int
+	state   state
+	active  *tea.Model
 	history []tea.Model
 }
 
 func (m model) Active() tea.Model {
 	return m.history[int(m.page)]
+}
+
+func (m model) Next(newMdl tea.Model, state state) model {
+	m.history = append(m.history, newMdl)
+	m.page++
+	m.state = state
+	m.active = &newMdl
+	return m
 }
 
 const (
@@ -291,7 +303,6 @@ const (
 )
 
 type loginMsg struct {
-	msg string
 	err error
 }
 
@@ -303,9 +314,15 @@ func initialModel() model {
 
 	if httpreq.token == "" || httpreq.userID == 0 {
 		m.history = append(m.history, MakeLoginModel())
+		m.state = loginState
+		m.active = &m.history[0]
+		return m
 	}
 
 	m.history = append(m.history, MakeForumModel("homepage", 1))
+	m.state = forumState
+
+	m.active = &m.history[0]
 	return m
 }
 
@@ -316,12 +333,51 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	/* switch m.state {
-	case loginState:
-		return m.loginModel.Update(msg)
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case loginMsg:
+		mdl := m.Active().(LoginModel)
+		mdl.isLoading = false
+		mdl.spinner.Finish()
+		if msg.err != nil {
+			mdl.msg = msg.err.Error()
+		} else {
+			mdl := MakeForumModel("homepage", 1)
+			m = m.Next(mdl, forumState)
+		}
+
+		*m.active = mdl
+		return m, tea.Batch(cmds...)
+
+	case tea.KeyMsg:
+		s := msg.String()
+		switch s {
+		case "ctrl+c", "esc", "ctrl+q":
+			return m, tea.Quit
+
+		case "up", "down", "enter", "tab", "shift+tab":
+			switch m.state {
+			case loginState:
+				mdl := m.Active().(LoginModel)
+				cmds = make([]tea.Cmd, 1)
+				*m.active, cmds[0] = mdl.Move(s, msg)
+
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 	}
-	return nil, nil */
-	return m.Active().Update(msg)
+
+	switch m.state {
+	case loginState:
+		mdl := m.Active().(LoginModel)
+		cmds = make([]tea.Cmd, 1)
+		*m.active, cmds[0] = mdl.Update(msg)
+
+		return m, tea.Batch(cmds...)
+	}
+	return m, tea.Batch(cmds...)
+	// return m.Active().Update(msg)
 }
 
 func (m model) View() string {
